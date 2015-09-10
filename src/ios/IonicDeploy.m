@@ -18,6 +18,7 @@
 @property Boolean ignore_deploy; 
 @property NSString *version_label;
 @property NSString *currentUUID;
+@property NSString *downloadedUUID;
 @property dispatch_queue_t serialQueue;
 @property NSString *cordova_js_resource;
 
@@ -220,9 +221,7 @@ typedef struct JsonHttpResponse {
 
         NSArray *paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
         NSString *libraryDirectory = [paths objectAtIndex:0];
-
-        NSString *uuid = [[NSUserDefaults standardUserDefaults] objectForKey:@"uuid"];
-
+        NSString *uuid = self.downloadedUUID;
         NSString *filePath = [NSString stringWithFormat:@"%@/%@", libraryDirectory, @"www.zip"];
         NSString *extractPath = [NSString stringWithFormat:@"%@/%@/", libraryDirectory, uuid];
 
@@ -275,23 +274,23 @@ typedef struct JsonHttpResponse {
     if (![uuid isEqualToString:@""] && !self.ignore_deploy && ![uuid isEqualToString:ignore]) {
 
         dispatch_async(self.serialQueue, ^{
-        if ( uuid != nil && ![self.currentUUID isEqualToString: uuid] ) {
-            NSArray *paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
-            NSString *libraryDirectory = [paths objectAtIndex:0];
-
-
-            NSString *query = [NSString stringWithFormat:@"cordova_js_bootstrap_resource=%@", self.cordova_js_resource];
-            
-            NSURLComponents *components = [NSURLComponents new];
-            components.scheme = @"file";
-            components.path = [NSString stringWithFormat:@"%@/%@/index.html", libraryDirectory, uuid];
-            components.query = query;
-
-            self.currentUUID = uuid;
-
-            NSLog(@"Redirecting to: %@", components.URL.absoluteString);
-            [self.webView loadRequest: [NSURLRequest requestWithURL:components.URL] ];
-        }
+            if ( uuid != nil && ![self.currentUUID isEqualToString: uuid] ) {
+                NSArray *paths = NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
+                NSString *libraryDirectory = [paths objectAtIndex:0];
+                
+                
+                NSString *query = [NSString stringWithFormat:@"cordova_js_bootstrap_resource=%@", self.cordova_js_resource];
+                
+                NSURLComponents *components = [NSURLComponents new];
+                components.scheme = @"file";
+                components.path = [NSString stringWithFormat:@"%@/%@/index.html", libraryDirectory, uuid];
+                components.query = query;
+                
+                self.currentUUID = uuid;
+                
+                NSLog(@"Redirecting to: %@", components.URL.absoluteString);
+                [self.webView loadRequest: [NSURLRequest requestWithURL:components.URL] ];
+            }
         });
     }
 }
@@ -412,8 +411,11 @@ typedef struct JsonHttpResponse {
 
     int versionCount = (int) [[NSUserDefaults standardUserDefaults] integerForKey:@"version_count"];
 
-    if (versionCount && versionCount > 3) {
-        NSInteger threshold = versionCount - 3;
+    // versionCount is the number of inactive versions saved as backups. This number doesn't include binary version and active deployed version
+    int maxVersionCount = 0;
+
+    if (versionCount && versionCount > maxVersionCount) {
+        NSInteger threshold = versionCount - maxVersionCount;
 
         NSInteger count = [versions count];
         for (NSInteger index = (count - 1); index >= 0; index--) {
@@ -474,17 +476,9 @@ typedef struct JsonHttpResponse {
 
 - (void)didFinishLoadingAllForManager:(DownloadManager *)downloadManager
 {
-    // Save the upstream_uuid (what we just downloaded) to the uuid preference
-    NSUserDefaults *prefs = [NSUserDefaults standardUserDefaults];
-    NSString *uuid = [[NSUserDefaults standardUserDefaults] objectForKey:@"uuid"];
-    NSString *upstream_uuid = [[NSUserDefaults standardUserDefaults] objectForKey:@"upstream_uuid"];
-
-    [prefs setObject: upstream_uuid forKey: @"uuid"];
-    [prefs synchronize];
-
-    NSLog(@"UUID is: %@ and upstream_uuid is: %@", uuid, upstream_uuid);
-
-    [self saveVersion:upstream_uuid];
+    //MODIFIED - Moved version save to zipArchiveProgressEvent()
+    self.downloadedUUID = [[NSUserDefaults standardUserDefaults] objectForKey:@"upstream_uuid"];
+    //END OF MODIFICATION
 
     NSLog(@"Download Finished...");
     CDVPluginResult* pluginResult = nil;
@@ -510,6 +504,21 @@ typedef struct JsonHttpResponse {
         CDVPluginResult* pluginResult = nil;
 
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"done"];
+
+        //MODIFIED - Moved from didFinishLoadingAllForManager()
+        // Save the upstream_uuid (what we just downloaded) to the uuid preference
+        NSUserDefaults *prefs = [NSUserDefaults standardUserDefaults];
+        NSString *uuid = [[NSUserDefaults standardUserDefaults] objectForKey:@"uuid"];
+        NSString *upstream_uuid = [[NSUserDefaults standardUserDefaults] objectForKey:@"upstream_uuid"];
+
+        [prefs setObject: upstream_uuid forKey: @"uuid"];
+        [prefs synchronize];
+
+        NSLog(@"UUID is: %@ and upstream_uuid is: %@", uuid, upstream_uuid);
+
+        [self saveVersion:upstream_uuid];
+
+        //END OF MODIFICATION
 
         [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
     }
