@@ -55,6 +55,8 @@ public class IonicDeploy extends CordovaPlugin {
   String version_label = null;
   boolean ignore_deploy = false;
   JSONObject last_update;
+  DownloadTask downloadTask = null;  //MODIFIED - Make downloadTask global
+  String downloadedUUID; 
 
   public static final String NO_DEPLOY_LABEL = "NO_DEPLOY_LABEL";
   public static final String NO_DEPLOY_AVAILABLE = "NO_DEPLOY_AVAILABLE";
@@ -181,7 +183,7 @@ public class IonicDeploy extends CordovaPlugin {
       return true;
     } else if (action.equals("extract")) {
       logMessage("EXTRACT", "Extracting update");
-      final String uuid = this.getUUID("");
+      final String uuid = downloadedUUID;
       cordova.getThreadPool().execute(new Runnable() {
         public void run() {
           unzip("www.zip", uuid, callbackContext);
@@ -278,7 +280,7 @@ public class IonicDeploy extends CordovaPlugin {
     } else {
       try {
           String url = this.last_update.getString("url");
-          final DownloadTask downloadTask = new DownloadTask(this.myContext, callbackContext);
+          downloadTask = new DownloadTask(this.myContext, callbackContext);
           downloadTask.execute(url);
       } catch (JSONException e) {
         logMessage("DOWNLOAD", e.toString());
@@ -349,8 +351,11 @@ public class IonicDeploy extends CordovaPlugin {
     int version_count = prefs.getInt("version_count", 0);
     Set<String> versions = this.getMyVersions();
 
-    if (version_count > 3) {
-      int threshold = version_count - 3;
+    // versionCount is the number of inactive versions saved as backups. This number doesn't include binary version and active deployed version
+    int maxVersionCount = 0;
+
+    if (version_count > maxVersionCount) {
+      int threshold = version_count - maxVersionCount;
 
       for (Iterator<String> i = versions.iterator(); i.hasNext();) {
         String version = i.next();
@@ -480,12 +485,11 @@ public class IonicDeploy extends CordovaPlugin {
    */
   private void unzip(String zip, String location, CallbackContext callbackContext) {
     SharedPreferences prefs = getPreferences();
-    String upstream_uuid = prefs.getString("upstream_uuid", "");
+    String upstream_uuid = downloadedUUID;
 
     logMessage("UNZIP", upstream_uuid);
 
     this.ignore_deploy = false;
-    this.updateVersionLabel(IonicDeploy.NOTHING_TO_IGNORE);
 
     if (upstream_uuid != "" && this.hasVersion(upstream_uuid)) {
       callbackContext.success("done"); // we have already extracted this version
@@ -546,8 +550,10 @@ public class IonicDeploy extends CordovaPlugin {
       logMessage("UNZIP_STEP", "Exception: " + e.getMessage());
     }
 
-    // Save the version we just downloaded as a version on hand
+    // MODIFIED - Moved from DownloadTask
+    prefs.edit().putString("uuid", upstream_uuid).apply();
     saveVersion(upstream_uuid);
+    this.updateVersionLabel(IonicDeploy.NOTHING_TO_IGNORE);
 
     String wwwFile = this.myContext.getFileStreamPath(zip).getAbsolutePath().toString();
     if (this.myContext.getFileStreamPath(zip).exists()) {
@@ -567,6 +573,7 @@ public class IonicDeploy extends CordovaPlugin {
 
   private void redirect(final String uuid, final boolean recreatePlugins) {
     String ignore = this.prefs.getString("ionicdeploy_version_ignore", IonicDeploy.NOTHING_TO_IGNORE);
+    logMessage("REDIRECT", "version to redirect : " + uuid + " , version to ignore : "+ignore);
     if (!uuid.equals("") && !this.ignore_deploy && !uuid.equals(ignore)) {
       prefs.edit().putString("uuid", uuid).apply();
       final File versionDir = this.myContext.getDir(uuid, Context.MODE_PRIVATE);
@@ -659,10 +666,20 @@ public class IonicDeploy extends CordovaPlugin {
       // Set the saved uuid to the most recently acquired upstream_uuid
       String uuid = prefs.getString("upstream_uuid", "");
 
-      prefs.edit().putString("uuid", uuid).apply();
+      downloadedUUID = uuid;
 
       callbackContext.success("true");
       return null;
     }
   }
+  
+  //MODIFIED - Interrupt download task on app pauses
+  //TODO - Make download can be paused and resume
+  public void onStop() {
+    if(downloadTask != null && downloadTask.getStatus() == AsyncTask.Status.RUNNING){
+      logMessage("DOWNLOAD", "Download stopped");
+      downloadTask.cancel(true);
+    }
+  }
+  //END OF MODIFICATION
 }
